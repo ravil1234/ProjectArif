@@ -2,6 +2,7 @@ package com.example.projectarif;
 import androidx.appcompat.app.AppCompatActivity;
 
 import android.content.Intent;
+import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Build;
@@ -34,14 +35,24 @@ import android.widget.Button;
 import android.widget.Toast;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import org.tensorflow.lite.Interpreter;
+
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
+@SuppressWarnings("ALL")
 public class CameraXActivity extends AppCompatActivity {
 
     private Executor executor = Executors.newSingleThreadExecutor();
@@ -51,6 +62,15 @@ public class CameraXActivity extends AppCompatActivity {
     PreviewView mPreviewView;
     int count_number_images = 0;
     Button stop_camera;
+    private static final int INPUT_SIZE = 300;
+    private static final int NUM_BYTES_PER_CHANNEL = 1;
+    private static final int NUM_DETECTIONS = 10;
+    private ByteBuffer imgData;
+    private Interpreter tflite;
+    private float[][][] outputLocations;
+    private float[][] outputClasses;
+    private float[][] outputScores;
+    private float[] numDetections;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -129,24 +149,19 @@ List<String> imageList=new ArrayList<>();
     {
         if(count_number_images<50)
         {
-            final File my_file = saveimagefile();
-            ImageCapture.OutputFileOptions outputFileOptions = new ImageCapture.OutputFileOptions.Builder(my_file).build();
-            imageCapture.takePicture(outputFileOptions, executor, new ImageCapture.OnImageSavedCallback() {
+            imageCapture.takePicture(executor, new  ImageCapture.OnImageCapturedCallback() {
                 @Override
-                public void onImageSaved(@NonNull ImageCapture.OutputFileResults outputFileResults) {
-                    new Handler(Looper.getMainLooper()).post(new Runnable() {
-                        @Override
-                        public void run()
-                        {
-                            Log.d("my_uri", "file://" + my_file.getAbsolutePath());
-                            imageList.add("file://" + my_file.getAbsolutePath());
-                            count_number_images++;
-                            Toast.makeText(CameraXActivity.this, "Image Saved successfully- " + count_number_images, Toast.LENGTH_SHORT).show();
-                        }
-                    });
+                public void onCaptureSuccess(@NonNull ImageProxy image)
+                {
+                    //super.onCaptureSuccess(image);
+                    Bitmap b=getBitmap(image);
+                    int bytes = b.getByteCount();
+                    ByteBuffer buffer = ByteBuffer.allocate(bytes); //Create a new buffer
+                    b.copyPixelsToBuffer(buffer); //Move the byte data to the buffer
+                    byte[] array = buffer.array();
+                    interpreter(array);
+
                 }
-
-
                 @Override
                 public void onError(@NonNull ImageCaptureException error) {
                     error.printStackTrace();
@@ -154,8 +169,43 @@ List<String> imageList=new ArrayList<>();
             });
         }
     }
+    private void interpreter(byte[] inp_array)
+    {
+        tflite=null;
+//        imgData = ByteBuffer.allocateDirect(1 * INPUT_SIZE * INPUT_SIZE * 3 * NUM_BYTES_PER_CHANNEL);
+//        imgData.order(ByteOrder.nativeOrder());
+        outputLocations = new float[1][NUM_DETECTIONS][4];
+        outputClasses = new float[1][NUM_DETECTIONS];
+        outputScores = new float[1][NUM_DETECTIONS];
+        numDetections = new float[1];
 
-    private File saveimagefile() {
+        try {
+            tflite = new Interpreter(loadModelFile());
+        }catch (Exception ex){
+            ex.printStackTrace();
+        }
+        Object[] inputArray = {inp_array};
+        Map<Float, Object> outputMap = new HashMap<>();
+        outputMap.put((float)0, outputLocations);
+        outputMap.put((float)1, outputClasses);
+        outputMap.put((float)2, outputScores);
+        outputMap.put((float)3, numDetections);
+        Log.d("BeforeOutput_Map",outputMap+"");
+        tflite.run(inp_array, outputMap);
+       Log.d("Output_Map",outputMap+"");
+       // tflite.run(input,output);
+    }
+    private MappedByteBuffer loadModelFile() throws IOException
+    {
+        AssetFileDescriptor fileDescriptor=this.getAssets().openFd("object_detector.tflite");
+        FileInputStream inputStream=new FileInputStream(fileDescriptor.getFileDescriptor());
+        FileChannel fileChannel=inputStream.getChannel();
+        long startOffset=fileDescriptor.getStartOffset();
+        long declareLength=fileDescriptor.getDeclaredLength();
+        return fileChannel.map(FileChannel.MapMode.READ_ONLY,startOffset,declareLength);
+    }
+    private File saveimagefile()
+    {
         File dir;
         File f = null;
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -172,7 +222,8 @@ List<String> imageList=new ArrayList<>();
         return f;
     }
 
-    private Bitmap getBitmap(ImageProxy image) {
+    private Bitmap getBitmap(ImageProxy image)
+    {
         ByteBuffer buffer = image.getPlanes()[0].getBuffer();
         buffer.rewind();
         byte[] bytes = new byte[buffer.capacity()];

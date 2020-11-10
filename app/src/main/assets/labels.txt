@@ -1,0 +1,29 @@
+item {
+  id: 1
+  name: 'front_glass'
+}
+
+item {
+  id: 2
+  name: 'back_glass'
+}
+
+item {
+  id: 3
+  name: 'window_glass'
+}
+
+item {
+  id: 4
+  name: 'headlight'
+}
+
+item {
+  id: 5
+  name: 'taillight'
+}
+
+item {
+  id: 6
+  name: 'wheel'
+}
